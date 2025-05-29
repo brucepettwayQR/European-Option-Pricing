@@ -1,0 +1,210 @@
+import numpy as np
+from scipy.stats import norm
+import matplotlib.pyplot as plt
+import QuantLib as ql
+
+
+
+
+# Black-Scholes method for European call option
+def black_scholes_call(S, K, TAU, SIG, R):
+
+    """Calculates the price of a European call option using the Black-Scholes formula.
+
+    Args:
+        S (float): Initial Stock Price
+        K (float): Strike Price
+        SIG (float): Annualized Volatility
+        TAU (float): Time to Maturity
+        R (float): Risk-free interest rate
+
+    Returns:
+        Black-Scholes price of the European call option
+    """
+
+    d1 = (np.log(S / K) + (R + (SIG ** 2 / 2)) * TAU) / (SIG * np.sqrt(TAU))
+    d2 = d1 - SIG * np.sqrt(TAU)
+    return S * norm.cdf(d1) - K * np.exp(-R * TAU) * norm.cdf(d2)
+
+
+
+# Geometric Brownian Motion Sample Paths
+def gbm_Sample_Paths(S, MU, SIG, TAU, DT, num_paths):
+    """Generates sample paths using Geometric Brownian Motion
+
+    Args:
+        S (float): Initial Stock Price
+        MU (float): Annialized Return (Drift)
+        SIG (float): Annualized Volatility
+        TAU (float): Time to Maturity
+        DT (float): Incremental Time Step
+        num_paths (int): Number of Sample Paths
+
+    Returns:
+        An array of simulated sample paths
+    """
+
+    num_steps = int(TAU / DT)
+    paths = np.zeros((num_paths, num_steps + 1))
+    paths[:, 0] = S
+
+    # Generate sample paths
+    for t in range(1, num_steps + 1):
+        z = np.random.normal(0, 1, num_paths) # Standard Normal Random Variables
+        paths[:, t] = paths[:, t-1] * np.exp((MU - 0.5 * SIG**2) * DT + SIG * np.sqrt(DT) * z)
+
+    return paths
+    
+# Example parameters for the GBM sample paths
+S = 100                   
+MU = 0.04                 
+SIG = 0.212               
+TAU = 30/365              
+DT = 1/365                
+num_paths = 10000         
+
+# Generate the paths
+paths = gbm_Sample_Paths(S, MU, SIG, TAU, DT, num_paths)
+
+# Plot a few sample paths for illustration
+plt.figure(figsize=(10, 6))
+plt.plot(paths[:10].T)   # Plot the first 10 paths transposed so time is on the x-axis
+plt.xlabel('Time Steps (Days)')
+plt.ylabel('Asset Price')
+plt.title('10,000 Sample Paths of GBM (Showing 10 Paths)')
+plt.grid(True)
+plt.show()
+
+
+# Price the European Call Option by averaging the max payoff across all paths
+K = 100       
+R = 0.015     
+TAU = 30/365    
+
+# Calculate the payoff for a European call option for each sample path
+payoffs = np.maximum(paths[:, -1] - K, 0)
+
+# Discount the average payoff back to the present value
+option_price = np.exp(-R * TAU) * np.mean(payoffs)
+
+# Print the option price
+print("European Call Option (GBM Sample Paths):", option_price)
+
+
+
+
+# Binomial Tree European Call Option Pricing
+def binomial_tree_call(S, K, TAU, R, SIG, N):
+    """Price a European call option using a binomial tree.
+    
+    Parameters:
+        S (float): Initial asset price.
+        K (float): Strike price.
+        TAU (float): Time to expiration in years.
+        R (float): Annual risk-free interest rate.
+        SIG (float): Annualized volatility.
+        N (int): Number of time steps.
+        
+    Returns:
+        option_price (float): The computed call option price.
+    """
+    dt = TAU / N
+    u = np.exp(SIG * np.sqrt(dt))
+    d = 1 / u
+    p = (np.exp(R * dt) - d) / (u - d)
+    
+    # Initialize asset prices at expiration (nodes at time T)
+    asset_prices = np.array([S * (u**j) * (d**(N - j)) for j in range(N + 1)])
+    
+    # Option values at expiration (payoffs)
+    option_values = np.maximum(asset_prices - K, 0)
+    
+    # Backward induction for option pricing
+    for i in range(N - 1, -1, -1):
+        for j in range(i + 1):
+            option_values[j] = np.exp(-R * dt) * (p * option_values[j + 1] + (1 - p) * option_values[j])
+    
+    return option_values[0]
+
+# Example parameters
+S = 100                
+K = 100                
+TAU = 30 / 365           
+R = 0.015              
+SIG = 0.212          
+N = 50                 
+
+# Price the option using the binomial tree
+option_price = binomial_tree_call(S, K, TAU, R, SIG, N)
+print("European Call Option Price (Binomial Tree):", option_price)
+
+# Black-Scholes price
+option_price_bs = black_scholes_call(S, K, TAU, SIG, R)
+print("European Call Option Price (Black-Scholes):", option_price_bs)
+
+
+
+
+
+
+
+
+
+
+# QuantLib European Call Option Pricing
+# Set evaluation date
+today = ql.Date(22, 2, 2025)
+ql.Settings.instance().evaluationDate = today
+
+# Option parameters
+expiry_date = today + ql.Period(30, ql.Days)  # 30 days to expiration
+option_type = ql.Option.Call
+strike = 100.0
+
+# Market data
+underlying_price = 100.0    # Current asset price
+risk_free_rate = 0.015      # Risk-free rate
+dividend_rate = 0.0         # Assume no dividend
+volatility = 0.212          # Annualized volatility
+
+# Day count convention and calendar
+day_count = ql.Actual365Fixed()
+calendar = ql.TARGET()
+
+# Construct flat term structures for risk-free rate, dividend yield, and volatility
+risk_free_curve = ql.FlatForward(today, risk_free_rate, day_count)
+dividend_curve = ql.FlatForward(today, dividend_rate, day_count)
+volatility_curve = ql.BlackConstantVol(today, calendar, volatility, day_count)
+
+# Create handles for the term structures
+risk_free_handle = ql.YieldTermStructureHandle(risk_free_curve)
+dividend_handle = ql.YieldTermStructureHandle(dividend_curve)
+vol_handle = ql.BlackVolTermStructureHandle(volatility_curve)
+
+# Set up the Black-Scholes Merton process
+underlying = ql.SimpleQuote(underlying_price)
+underlying_handle = ql.QuoteHandle(underlying)
+bsm_process = ql.BlackScholesMertonProcess(underlying_handle,
+                                           dividend_handle,
+                                           risk_free_handle,
+                                           vol_handle)
+
+# Define the European option payoff and exercise
+payoff = ql.PlainVanillaPayoff(option_type, strike)
+exercise = ql.EuropeanExercise(expiry_date)
+european_option = ql.VanillaOption(payoff, exercise)
+
+# Use the analytic European pricing engine (i.e., Black-Scholes)
+engine = ql.AnalyticEuropeanEngine(bsm_process)
+european_option.setPricingEngine(engine)
+
+# Price the option
+option_price = european_option.NPV()
+print("European Call Option Price (QuantLib):", option_price)
+
+
+
+
+
+
+
